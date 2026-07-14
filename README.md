@@ -56,7 +56,7 @@ Applied to **every string leaf** under tool args:
 3. **JSON**: string that is a complete `[...]` or `{...}` and `JSON.parse` succeeds → object/array (then recurse)  
 4. Otherwise leave the string as-is  
 
-Leading-zero pure digits like `"001"` become number `1` (same as `Number("001")`). Non-numeric text, shell snippets, file paths, and partial braces are not forced.
+Leading-zero digit strings like `"001"` are **kept as strings** (avoids mangling paths/IDs). Non-numeric text, shell snippets, file paths, and partial braces are not forced.
 
 ## Develop
 
