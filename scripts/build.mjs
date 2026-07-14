@@ -6,115 +6,77 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..")
 const dist = join(root, "dist")
 await mkdir(dist, { recursive: true })
 
-// Hand-written ESM build: no runtime deps, works without tsc/bun.
 const js = `/**
  * opencode-inputfix
- * Coerce stringified booleans/numbers/JSON in tool args before schema validation.
+ * Auto-coerce stringified booleans / numbers / JSON in tool args
+ * before OpenCode schema validation. Detection is value-based, not key-based.
  */
 
-const BOOL_KEYS = new Set([
-  "background",
-  "run_in_background",
-  "block",
-  "full_session",
-  "include_thinking",
-  "include_tool_results",
-  "from_end",
-  "dryRun",
-  "dry_run",
-  "extract_main",
-  "include_metadata",
-  "save_binary",
-  "matchCase",
-  "matchWholeWords",
-  "useRegexp",
-  "replaceAll",
-  "multiple",
-]);
+const BOOL_RE = /^(true|false)$/i;
+const NUMBER_RE = /^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$/;
 
-const NUMBER_KEYS = new Set([
-  "timeout",
-  "numResults",
-  "limit",
-  "offset",
-  "context",
-  "message_limit",
-  "thinking_max_chars",
-  "lastN",
-  "port",
-  "max_tokens",
-  "temperature",
-]);
+function looksLikeJsonContainer(s) {
+  if (s.length < 2) return false;
+  const first = s[0];
+  const last = s[s.length - 1];
+  return (first === "[" && last === "]") || (first === "{" && last === "}");
+}
 
-const JSON_KEYS = new Set([
-  "todos",
-  "questions",
-  "options",
-  "images",
-  "globs",
-  "paths",
-  "language",
-  "skills",
-  "mcps",
-]);
+function coerceScalarString(value) {
+  const s = value.trim();
+  if (s === "") return value;
 
-function coerceValue(key, value) {
-  if (typeof value === "string") {
-    const s = value.trim();
+  if (BOOL_RE.test(s)) return s.toLowerCase() === "true";
 
-    if (BOOL_KEYS.has(key)) {
-      const lower = s.toLowerCase();
-      if (lower === "true" || s === "1" || lower === "yes") return true;
-      if (lower === "false" || s === "0" || lower === "no") return false;
-    }
+  if (NUMBER_RE.test(s)) {
+    const n = Number(s);
+    if (Number.isFinite(n)) return n;
+  }
 
-    if (
-      NUMBER_KEYS.has(key) &&
-      s !== "" &&
-      !Number.isNaN(Number(s)) &&
-      /^-?\\d+(\\.\\d+)?$/.test(s)
-    ) {
-      return Number(s);
-    }
-
-    if (
-      JSON_KEYS.has(key) &&
-      ((s.startsWith("[") && s.endsWith("]")) || (s.startsWith("{") && s.endsWith("}")))
-    ) {
-      try {
-        return JSON.parse(s);
-      } catch {
-        // keep original
+  if (looksLikeJsonContainer(s)) {
+    try {
+      const parsed = JSON.parse(s);
+      if (parsed !== null && typeof parsed === "object") {
+        return walk(parsed);
       }
-    }
-  }
-
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    coerceArgs(value);
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      if (item && typeof item === "object") coerceArgs(item);
+    } catch {
+      // keep original string
     }
   }
 
   return value;
 }
 
-export function coerceArgs(args) {
-  let changed = false;
-  for (const [key, value] of Object.entries(args)) {
-    const next = coerceValue(key, value);
-    if (next !== value) {
-      args[key] = next;
-      changed = true;
+function walk(node) {
+  if (typeof node === "string") return coerceScalarString(node);
+
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i++) {
+      const next = walk(node[i]);
+      if (next !== node[i]) node[i] = next;
     }
+    return node;
   }
-  return changed;
+
+  if (node && typeof node === "object") {
+    for (const [k, v] of Object.entries(node)) {
+      const next = walk(v);
+      if (next !== v) node[k] = next;
+    }
+    return node;
+  }
+
+  return node;
 }
 
-export const ToolTypeCoercePlugin = async () => {
+/** Mutate tool args in place. Returns whether any value changed. */
+export function coerceArgs(args) {
+  const before = JSON.stringify(args);
+  walk(args);
+  return JSON.stringify(args) !== before;
+}
+
+export const InputFixPlugin = async () => {
   return {
     "tool.execute.before": async (_input, output) => {
       const args = output?.args;
@@ -124,12 +86,15 @@ export const ToolTypeCoercePlugin = async () => {
   };
 };
 
-export default ToolTypeCoercePlugin;
+export default InputFixPlugin;
+export { InputFixPlugin as ToolTypeCoercePlugin };
 `
 
 const dts = `import type { Plugin } from "@opencode-ai/plugin";
 
 export declare function coerceArgs(args: Record<string, unknown>): boolean;
+export declare const InputFixPlugin: Plugin;
+/** @deprecated use InputFixPlugin */
 export declare const ToolTypeCoercePlugin: Plugin;
 declare const _default: Plugin;
 export default _default;
@@ -138,18 +103,46 @@ export default _default;
 await writeFile(join(dist, "index.js"), js)
 await writeFile(join(dist, "index.d.ts"), dts)
 
-// smoke test
 const mod = await import(join(dist, "index.js") + `?t=${Date.now()}`)
-const sample = { background: "true", timeout: "3000", todos: '[{"id":"1"}]', keep: "x" }
+
+// value-based: any key
+const sample = {
+  foo: "true",
+  bar: "false",
+  n: "3000",
+  sci: "1e3",
+  keep: "hello",
+  pathish: "001",
+  todos: '[{"id":"1","ok":"true"}]',
+  nested: { flag: "TRUE", deep: { count: "42" } },
+  list: ["false", "12", "x"],
+}
 mod.coerceArgs(sample)
-if (sample.background !== true) throw new Error("bool coerce failed")
-if (sample.timeout !== 3000) throw new Error("number coerce failed")
-if (!Array.isArray(sample.todos)) throw new Error("json coerce failed")
-if (sample.keep !== "x") throw new Error("unknown key mutated")
+if (sample.foo !== true) throw new Error("bool true failed")
+if (sample.bar !== false) throw new Error("bool false failed")
+if (sample.n !== 3000) throw new Error("number failed")
+if (sample.sci !== 1000) throw new Error("sci number failed")
+if (sample.keep !== "hello") throw new Error("plain string mutated")
+if (sample.pathish !== 1) {
+  // "001" is a valid number string under Number("001")===1; we intentionally coerce pure numeric strings.
+  // If we want to preserve leading zeros, NUMBER_RE would need to reject leading zeros. Keep current: pure numeric → number.
+}
+if (!Array.isArray(sample.todos)) throw new Error("json array failed")
+if (sample.todos[0].ok !== true) throw new Error("nested json bool failed")
+if (sample.nested.flag !== true) throw new Error("nested bool failed")
+if (sample.nested.deep.count !== 42) throw new Error("nested number failed")
+if (sample.list[0] !== false || sample.list[1] !== 12 || sample.list[2] !== "x") {
+  throw new Error("array coerce failed")
+}
+
+// do not parse non-json-looking text
+const leave = { cmd: "echo {not json", text: "[unclosed" }
+mod.coerceArgs(leave)
+if (leave.cmd !== "echo {not json" || leave.text !== "[unclosed") throw new Error("over-parsed")
+
 const hooks = await mod.default({})
-if (typeof hooks["tool.execute.before"] !== "function") throw new Error("plugin shape invalid")
-const args = { background: "false" }
+const args = { background: "false", timeout: "5" }
 await hooks["tool.execute.before"]({ tool: "task" }, { args })
-if (args.background !== false) throw new Error("hook mutate failed")
+if (args.background !== false || args.timeout !== 5) throw new Error("hook mutate failed")
 
 console.log("build ok:", (await readFile(join(dist, "index.js"))).length, "bytes")

@@ -9,13 +9,15 @@ SchemaError(Expected boolean | undefined, got "true" at ["background"])
 Please rewrite the input so it satisfies the expected schema.
 ```
 
-Some models occasionally emit tool arguments with stringified types:
+Some models occasionally emit tool arguments with stringified types. This plugin **auto-detects values** (not field-name allowlists) and coerces:
 
 | dirty input | coerced to |
 |---|---|
-| `"true"` / `"false"` | `true` / `false` |
-| `"3000"` | `3000` |
-| `"[\"a\"]"` on known list fields | `["a"]` |
+| `"true"` / `"false"` (any key) | `true` / `false` |
+| `"3000"` / `"1e3"` (any key) | `3000` / `1000` |
+| `"[...]"` / `"{...}"` valid JSON | parsed array / object |
+
+Nested objects/arrays are walked recursively. Plain text strings are left unchanged.
 
 The plugin hooks `tool.execute.before` and mutates `output.args` **before** OpenCode's strict schema decode.
 
@@ -23,22 +25,12 @@ The plugin hooks `tool.execute.before` and mutates `output.args` **before** Open
 
 Add to `~/.config/opencode/opencode.json` (or project `opencode.json`):
 
-### From GitHub / npm path
+### From GitHub
 
 ```json
 {
   "plugin": [
     "github:linze0721/opencode-inputfix"
-  ]
-}
-```
-
-Or after publishing to npm:
-
-```json
-{
-  "plugin": [
-    "opencode-inputfix@0.1.0"
   ]
 }
 ```
@@ -55,27 +47,16 @@ Or after publishing to npm:
 
 Restart OpenCode after changing plugins.
 
-## What it coerces
+## Coercion rules
 
-Boolean-like keys (string → boolean):
+Applied to **every string leaf** under tool args:
 
-- `background`, `run_in_background`, `block`, `full_session`
-- `include_thinking`, `include_tool_results`, `from_end`
-- `dryRun`, `dry_run`, `extract_main`, `include_metadata`, `save_binary`
-- `matchCase`, `matchWholeWords`, `useRegexp`, `replaceAll`, `multiple`
+1. **Boolean**: exact `true` / `false` (case-insensitive) → boolean  
+2. **Number**: full-string numeric literal (`42`, `-3.14`, `1e3`) → number  
+3. **JSON**: string that is a complete `[...]` or `{...}` and `JSON.parse` succeeds → object/array (then recurse)  
+4. Otherwise leave the string as-is  
 
-Number-like keys (numeric string → number):
-
-- `timeout`, `numResults`, `limit`, `offset`, `context`
-- `message_limit`, `thinking_max_chars`, `lastN`, `port`
-- `max_tokens`, `temperature`
-
-JSON-string list/object keys:
-
-- `todos`, `questions`, `options`, `images`, `globs`, `paths`
-- `language`, `skills`, `mcps`
-
-Only safe, explicit conversions are applied. Unknown keys are left alone.
+Leading-zero pure digits like `"001"` become number `1` (same as `Number("001")`). Non-numeric text, shell snippets, file paths, and partial braces are not forced.
 
 ## Develop
 

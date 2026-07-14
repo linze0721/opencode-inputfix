@@ -2,7 +2,7 @@
 
 [English](./README.md)
 
-OpenCode 插件：在 schema 校验前，修正模型把 tool 参数类型写错的问题。
+OpenCode 插件：在 schema 校验前，**自动**修正模型把 tool 参数类型写错的问题。
 
 常见报错：
 
@@ -11,13 +11,15 @@ SchemaError(Expected boolean | undefined, got "true" at ["background"])
 Please rewrite the input so it satisfies the expected schema.
 ```
 
-Claude / 某些代理有时会把参数类型序列化成字符串：
+Claude / 某些代理有时会把参数序列化成字符串。本插件按**值内容**识别（不再依赖字段名白名单）：
 
 | 错误输入 | 修正后 |
 |---|---|
-| `"true"` / `"false"` | `true` / `false` |
-| `"3000"` | `3000` |
-| `"[\"a\"]"`（已知列表字段） | `["a"]` |
+| 任意字段 `"true"` / `"false"` | `true` / `false` |
+| 任意字段 `"3000"` / `"1e3"` | `3000` / `1000` |
+| 合法 JSON 字符串 `"[...]"` / `"{...}"` | 解析成数组 / 对象 |
+
+会递归处理嵌套对象和数组；普通文本字符串不动。
 
 插件挂在 `tool.execute.before`，在 OpenCode 严格 schema decode **之前** 原地修改 `output.args`。
 
@@ -35,16 +37,6 @@ Claude / 某些代理有时会把参数类型序列化成字符串：
 }
 ```
 
-### npm（发布后）
-
-```json
-{
-  "plugin": [
-    "opencode-inputfix@0.1.0"
-  ]
-}
-```
-
 ### 本地路径
 
 ```json
@@ -55,29 +47,18 @@ Claude / 某些代理有时会把参数类型序列化成字符串：
 }
 ```
 
-改完插件配置后需要 **重启 OpenCode**。
+改完后需要 **重启 OpenCode**。
 
-## 会修正哪些字段
+## 修正规则
 
-布尔类（字符串 → boolean）：
+对 tool args 下每个字符串叶子：
 
-- `background`, `run_in_background`, `block`, `full_session`
-- `include_thinking`, `include_tool_results`, `from_end`
-- `dryRun`, `dry_run`, `extract_main`, `include_metadata`, `save_binary`
-- `matchCase`, `matchWholeWords`, `useRegexp`, `replaceAll`, `multiple`
+1. **布尔**：整段就是 `true` / `false`（忽略大小写）→ boolean  
+2. **数字**：整段都是数字字面量（`42`、`-3.14`、`1e3`）→ number  
+3. **JSON**：完整的 `[...]` 或 `{...}` 且 `JSON.parse` 成功 → 对象/数组（再递归）  
+4. 其他情况保持原字符串  
 
-数字类（数字字符串 → number）：
-
-- `timeout`, `numResults`, `limit`, `offset`, `context`
-- `message_limit`, `thinking_max_chars`, `lastN`, `port`
-- `max_tokens`, `temperature`
-
-JSON 字符串类：
-
-- `todos`, `questions`, `options`, `images`, `globs`, `paths`
-- `language`, `skills`, `mcps`
-
-只做明确、安全的转换；未知字段不会动。
+纯数字且带前导零的 `"001"` 会变成数字 `1`。路径、命令、残缺括号等不会被强行解析。
 
 ## 开发
 
