@@ -1,0 +1,51 @@
+{
+  "name": "opencode-inputfix",
+  "version": "0.1.0",
+  "description": "OpenCode plugin that coerces stringified booleans/numbers/JSON in tool args before schema validation (fixes Claude background:\"true\" etc.).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "prepublishOnly": "node ./scripts/build.mjs"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "opencode-ai",
+    "tool",
+    "schema",
+    "coerce",
+    "boolean",
+    "claude",
+    "input-fix"
+  ],
+  "author": "linze0721",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/linze0721/opencode-inputfix.git"
+  },
+  "homepage": "https://github.com/linze0721/opencode-inputfix#readme",
+  "bugs": {
+    "url": "https://github.com/linze0721/opencode-inputfix/issues"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.14.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.17.18"
+  }
+}
